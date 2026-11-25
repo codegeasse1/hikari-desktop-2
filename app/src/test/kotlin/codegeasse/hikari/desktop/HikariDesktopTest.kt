@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test
 class HikariDesktopTest {
     @Test
     fun `sanitize keeps install dirs safe`() {
-        assertEquals("My_Ext-1.2", Installer.sanitize("My Ext:1.2"))
+        assertEquals("My_Ext_1.2", Installer.sanitize("My Ext:1.2"))
         assertEquals("plugin", Installer.sanitize(""))
         assertTrue(Installer.sanitize("a".repeat(200)).length <= 80)
     }

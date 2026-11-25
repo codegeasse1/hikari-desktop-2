@@ -64,6 +64,12 @@ jobs:
             sleep 20
           done
           grep -E "e: |FAILED|Execution failed|error:" gradle-build.log | head -n 80 || true
+          grep -B2 -A12 "AssertionFailedError\|expected:" gradle-build.log | head -n 100 || true
+          for f in app/build/test-results/test/TEST-*.xml; do
+            [ -f "$f" ] || continue
+            echo "==== $f ===="
+            grep -o 'message="[^"]*"' "$f" | head -n 10 || true
+          done
           tail -n 30 gradle-build.log
           exit 1
         shell: bash
