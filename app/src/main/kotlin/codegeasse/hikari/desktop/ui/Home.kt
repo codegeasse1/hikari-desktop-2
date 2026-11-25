@@ -104,7 +104,7 @@ object Home {
                             renderHistory(rowsBox, history)
                         }
                         val key = "${p.ref.id}::${row.title}"
-                        val node = Ui.rail(row.title, p.ref.name, items) { AppShell.goDetail(it) }
+                        val node = Ui.rail(row.title, p.ref.name, items, { AppShell.goDetail(it) })
                         rowNodes[key] = node
                         insertRowSorted(rowsBox, key, node, providers)
                         refreshHero(heroSlot, heroPool)
@@ -174,7 +174,7 @@ object Home {
                     if (items.isEmpty()) continue
                     heroPool.addAll(items.filter { !it.backdropUrl.isNullOrBlank() }.take(3))
                     val key = "${p.ref.id}::retry::${row.title}"
-                    val node = Ui.rail(row.title, p.ref.name, items) { AppShell.goDetail(it) }
+                    val node = Ui.rail(row.title, p.ref.name, items, { AppShell.goDetail(it) })
                     node.properties["hk"] = key
                     insertRowSorted(rowsBox, key, node, providers)
                     refreshHero(heroSlot, heroPool)
