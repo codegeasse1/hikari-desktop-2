@@ -70,6 +70,29 @@ object Engines {
 
     fun current(): List<Provider> = cached
 
+    /**
+     * Hot-mount freshly installed/updated providers (the sync-generation trick):
+     * replaces same-id entries in place. No full reload — install lands in ~1s.
+     */
+    fun upsert(providers: List<Provider>) {
+        if (providers.isEmpty()) return
+        val ids = providers.map { it.ref.id }.toSet()
+        cached = cached.filterNot { it.ref.id in ids } + providers
+    }
+
+    /** Reload a single engine (uninstall/toggle paths). Bounded, never throws. */
+    suspend fun reloadEngine(kind: EngineKind): List<Provider> {
+        val eng = engines[kind] ?: return emptyList()
+        val fresh = withTimeoutOrNull(30_000L) {
+            runCatching { eng.loadProviders() }.getOrElse {
+                Log.w("engines", "$kind reload failed: ${it.message}")
+                emptyList()
+            }
+        } ?: emptyList()
+        cached = cached.filterNot { it.ref.engine == kind } + fresh
+        return fresh
+    }
+
     /** Home rows from every enabled provider, bounded: slow providers are skipped, never fatal. */
     suspend fun homeRows(maxPerProviderRows: Int = 12): List<CatalogRow> = supervisorScope {
         current().filter { it.ref.enabled }.map { p ->

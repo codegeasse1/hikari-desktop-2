@@ -107,29 +107,56 @@ object Hiki : Engine {
         null
     }
 
-    suspend fun install(item: ListingItem, onProgress: (Double) -> Unit): Boolean {
+    /**
+     * Download + store a plugin payload. Streams straight to disk, validates
+     * the file in place, atomically renames. Returns the plugin dir on success.
+     */
+    suspend fun install(item: ListingItem, onProgress: (Double) -> Unit): File? {
         val name = item.id.removePrefix("hiki|")
-        val bytes = Installer.fetchPayload(item.payloadUrls) { onProgress(it * 0.7) } ?: return false
-        if (bytes.isEmpty() || bytes.size > 60 * 1024 * 1024) return false
-        val manifest = readManifestBytes(bytes)
-        val mainClass = manifest?.get("mainClass")
-        if (mainClass.isNullOrBlank() && !Dex.looksLikeJar(bytes)) return false
         val dir = Installer.pluginDir("hiki", name)
-        val ext = if (looksLikeJar(bytes)) ".jar" else ".hiki"
-        val tmp = File(dir, "payload$ext.part")
-        tmp.writeBytes(bytes)
-        dir.listFiles()
-            ?.filter { it.isFile && (it.name.endsWith(".jar") || it.name.endsWith(".hiki")) }
-            ?.forEach { runCatching { it.delete() } }
-        val dest = File(dir, "payload$ext")
-        if (dest.exists()) dest.delete()
-        tmp.renameTo(dest)
-        File(dir, "meta.json").writeText(
-            """{"version":"${(item.version ?: "").replace("\"", "")}","name":"${item.name.replace("\"", "")}"}""",
-        )
-        onProgress(1.0)
-        Log.i("hiki", "installed ${item.name} v${item.version}")
-        return true
+        val ordered = item.payloadUrls.sortedBy {
+            if (it.substringBefore('?').endsWith(".jar", ignoreCase = true)) 0 else 1
+        }
+        for (u in ordered) {
+            val ext = if (looksLikeJarUrl(u)) ".jar" else ".hiki"
+            val dest = File(dir, "payload$ext")
+            Installer.downloadToFile(listOf(u), dest, 64L * 1024 * 1024) {
+                onProgress(0.05 + it * 0.8)
+            } ?: continue
+            onProgress(0.9)
+            if (!validatePayloadFile(dest)) {
+                Log.w("hiki", "payload failed validation: $u")
+                runCatching { dest.delete() }
+                continue
+            }
+            dir.listFiles()
+                ?.filter { it.isFile && it != dest && (it.name.endsWith(".jar") || it.name.endsWith(".hiki")) }
+                ?.forEach { runCatching { it.delete() } }
+            File(dir, "meta.json").writeText(
+                """{"version":"${(item.version ?: "").replace("\"", "")}","name":"${item.name.replace("\"", "")}"}""",
+            )
+            onProgress(1.0)
+            Log.i("hiki", "installed ${item.name} v${item.version} from $u")
+            return dir
+        }
+        return null
+    }
+
+    private fun looksLikeJarUrl(u: String): Boolean = u.substringBefore('?').endsWith(".jar", ignoreCase = true)
+
+    private fun validatePayloadFile(file: File): Boolean {
+        if (!file.exists() || file.length() < 100L) return false
+        return try {
+            ZipFile(file).use { z ->
+                val names = z.entries().asSequence().map { it.name }.toList()
+                val isJar = names.any { it.endsWith(".class") }
+                val isHiki = names.any { it == "manifest.json" } &&
+                    (names.any { it == "classes.dex" } || isJar)
+                isJar || isHiki
+            }
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun looksLikeJar(payload: ByteArray): Boolean {
@@ -184,29 +211,41 @@ object Hiki : Engine {
         val dirs = root.listFiles()?.filter { it.isDirectory } ?: return@withContext emptyList()
         val out = mutableListOf<Provider>()
         for (dir in dirs) {
-            val payload = payloadFile(dir) ?: continue
             try {
-                val bytes = payload.readBytes()
-                val manifest = readManifestBytes(bytes)
-                val version = manifest?.get("version") ?: payload.length().toString()
-                val key = "hiki-${Installer.sanitize(dir.name)}-$version"
-                val loaded = Dex.load(bytes, key)
-                val candidates = listOfNotNull(manifest?.get("mainClass")).ifEmpty {
-                    Dex.scanSubtypes(Dex.jarFile(key), "com/hikari/ext/HikariProvider")
-                }
-                if (candidates.isEmpty()) continue
-                for (mainClass in candidates) {
-                    val inst = runCatching {
-                        val cls = loaded.loader.loadClass(mainClass)
-                        cls.getDeclaredConstructor().newInstance() as? HikariProvider
-                    }.getOrNull() ?: continue
-                    out += HikiProvider(inst)
-                }
+                out += mountDir(dir)
             } catch (t: Throwable) {
                 Log.w("hiki", "plugin ${dir.name} failed: ${t.message}")
             }
         }
         out
+    }
+
+    /**
+     * Mount ONE plugin dir (hot-mount a fresh install). Runs on IO,
+     * returns empty for a bad payload.
+     */
+    fun mountDir(dir: File): List<Provider> {
+        val payload = payloadFile(dir) ?: return emptyList()
+        return try {
+            val bytes = payload.readBytes()
+            val manifest = readManifestBytes(bytes)
+            val version = manifest?.get("version") ?: payload.length().toString()
+            val key = "hiki-${Installer.sanitize(dir.name)}-$version"
+            val loaded = Dex.load(bytes, key)
+            val candidates = listOfNotNull(manifest?.get("mainClass")).ifEmpty {
+                Dex.scanSubtypes(Dex.jarFile(key), "com/hikari/ext/HikariProvider")
+            }
+            if (candidates.isEmpty()) return emptyList()
+            candidates.mapNotNull { mainClass ->
+                runCatching {
+                    val cls = loaded.loader.loadClass(mainClass)
+                    cls.getDeclaredConstructor().newInstance() as? HikariProvider
+                }.getOrNull()
+            }.map { HikiProvider(it) }
+        } catch (t: Throwable) {
+            Log.w("hiki", "plugin ${dir.name} failed: ${t.message}")
+            emptyList()
+        }
     }
 }
 

@@ -128,6 +128,7 @@ object Net {
         url: String,
         dest: File,
         headers: Map<String, String> = emptyMap(),
+        maxBytes: Long = Long.MAX_VALUE,
         onProgress: (Double) -> Unit = {},
     ): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -151,6 +152,11 @@ object Net {
                         while (true) {
                             val n = input.read(buf)
                             if (n < 0) break
+                            done += n
+                            if (done > maxBytes) {
+                                Log.w("net", "download exceeded cap $url")
+                                return@withContext false
+                            }
                             out.write(buf, 0, n)
                             done += n
                             if (total > 0 && done - last > 256 * 1024) {

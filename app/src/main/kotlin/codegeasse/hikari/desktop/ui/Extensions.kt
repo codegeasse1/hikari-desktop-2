@@ -181,7 +181,7 @@ object Extensions {
             box.children.clear()
             box.children.add(section("Repositories", repoEditor(repoUrls(), saveRepos) { rebuild() }))
             val stats = Ui.muted("Syncing…")
-            val head = HBox(10.0, Ui.title("Extensions"), Ui.spacer(), stats).apply {
+            val head = HBox(10.0, Ui.title("Extensions"), Ui.spacer(), Ui.ghostBtn("↻ Sync") { rebuild() }, stats).apply {
                 alignment = Pos.CENTER_LEFT
             }
             box.children.add(head)
@@ -252,7 +252,7 @@ object Extensions {
                             onToggle = { en ->
                                 Installer.setEnabled(engineTag, it.id, en)
                                 Bg.run {
-                                    Engines.reload()
+                                    Engines.reloadEngine(kind)
                                     Fx.run { onChanged() }
                                 }
                             },
@@ -260,7 +260,7 @@ object Extensions {
                             onUninstall = {
                                 Installer.uninstall(engineTag, it.id.removePrefix("$engineTag|"))
                                 Bg.run {
-                                    Engines.reload()
+                                    Engines.reloadEngine(kind)
                                     Fx.run { onChanged() }
                                 }
                             },
@@ -297,15 +297,18 @@ object Extensions {
         val job = InstallJob("$engineTag:${item.id}", "${kind.label} · ${item.name}")
         job.state = JobState.RUNNING
         Installer.enqueue(job) {
-            Installer.progress(job.key, 0.2, "downloading")
-            val ok = if (kind == EngineKind.CS) {
-                CsEngine.install(item) { Installer.progress(job.key, 0.2 + it * 0.7, "downloading") }
+            // Stream to disk with live progress, then hot-mount just this plugin.
+            // No full reload — this is the install-in-a-second path.
+            val dir = if (kind == EngineKind.CS) {
+                CsEngine.install(item) { Installer.progress(job.key, it * 0.9, "downloading") }
             } else {
-                Hiki.install(item) { Installer.progress(job.key, 0.2 + it * 0.7, "downloading") }
-            }
-            if (!ok) throw IllegalStateException("download or validation failed")
-            Installer.progress(job.key, 0.95, "reloading")
-            Engines.reload()
+                Hiki.install(item) { Installer.progress(job.key, it * 0.9, "downloading") }
+            } ?: throw IllegalStateException("download or validation failed")
+            Installer.progress(job.key, 0.95, "mounting")
+            val fresh = if (kind == EngineKind.CS) CsEngine.mountDir(dir) else Hiki.mountDir(dir)
+            if (fresh.isEmpty()) throw IllegalStateException("downloaded, but the plugin would not load")
+            Engines.upsert(fresh)
+            Installer.progress(job.key, 1.0, "ready")
             Fx.run { onChanged() }
         }
     }
@@ -318,7 +321,7 @@ object Extensions {
             box.children.clear()
             box.children.add(section("Scraper manifests", repoEditor(NuvioEngine.repoUrls(), NuvioEngine::saveRepos) { rebuild() }))
             val stats = Ui.muted("Loading scrapers…")
-            box.children.add(HBox(10.0, Ui.title("Scrapers"), Ui.spacer(), stats).apply { alignment = Pos.CENTER_LEFT })
+            box.children.add(HBox(10.0, Ui.title("Scrapers"), Ui.spacer(), Ui.ghostBtn("↻ Sync") { rebuild() }, stats).apply { alignment = Pos.CENTER_LEFT })
             val list = VBox(8.0, Ui.skeletonRow("Loading…", 4))
             box.children.add(list)
             Bg.run {
@@ -382,14 +385,14 @@ object Extensions {
                             setOnAction {
                                 if (key != null) {
                                     Installer.setEnabled("stremio", key, isSelected)
-                                    Bg.run { Engines.reload() }
+                                    Bg.run { Engines.reloadEngine(EngineKind.STREMIO) }
                                 }
                             }
                         }
                         val del = Ui.ghostBtn("Remove") {
                             StremioEngine.saveManifests(urls - c.url)
                             Bg.run {
-                                Engines.reload()
+                                Engines.reloadEngine(EngineKind.STREMIO)
                                 Fx.run { rebuild() }
                             }
                         }
@@ -424,7 +427,7 @@ object Extensions {
                             ?: throw IllegalStateException("not a Stremio manifest")
                         val clean = u.trim().removeSuffix("/manifest.json").trimEnd('/') + "/manifest.json"
                         StremioEngine.saveManifests(StremioEngine.savedManifests() + clean)
-                        Engines.reload()
+                        Engines.reloadEngine(EngineKind.STREMIO)
                         Fx.run { rebuild() }
                     }
                 }

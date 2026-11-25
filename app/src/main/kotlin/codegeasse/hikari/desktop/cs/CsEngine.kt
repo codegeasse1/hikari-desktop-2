@@ -145,35 +145,69 @@ object CsEngine : Engine {
         null
     }
 
-    /** Download + store a plugin payload. Returns true on success. */
-    suspend fun install(item: ListingItem, onProgress: (Double) -> Unit): Boolean {
+    /**
+     * Download + store a plugin payload. Streams straight to disk (one write),
+     * validates the file in place, then atomically renames — the fast path:
+     * JVM jars mount in ~1s, no dex conversion involved.
+     * Returns the plugin dir on success, null on failure.
+     */
+    suspend fun install(item: ListingItem, onProgress: (Double) -> Unit): File? {
         val internalName = item.id.removePrefix("cs|")
-        val win = Net.raceBytes(item.payloadUrls) ?: return false
-        val bytes = win.second ?: return false
-        if (bytes.isEmpty() || bytes.size > 60 * 1024 * 1024) return false
-        onProgress(0.7)
-        // Validate before replacing anything (.cs3 must carry manifest.json;
-        // bare JVM jars without one are accepted and scanned at load time).
-        val manifest = readManifestBytes(bytes)
-        val isJar = Dex.looksLikeJar(bytes)
-        if (manifest == null && !isJar) return false
-        if (manifest != null && manifest["pluginClassName"].isNullOrBlank() && !isJar) return false
         val dir = Installer.pluginDir("cs", internalName)
-        val ext = if (win.first.endsWith(".jar")) ".jar" else ".cs3"
-        val tmp = File(dir, "payload$ext.part")
-        tmp.writeBytes(bytes)
-        dir.listFiles()
-            ?.filter { it.isFile && (it.name.endsWith(".jar") || it.name.endsWith(".cs3")) }
-            ?.forEach { runCatching { it.delete() } }
-        val dest = File(dir, "payload$ext")
-        if (dest.exists()) dest.delete()
-        tmp.renameTo(dest)
-        File(dir, "meta.json").writeText(
-            """{"version":"${(item.version ?: "").replace("\"", "")}","name":"${item.name.replace("\"", "")}"}""",
-        )
-        onProgress(1.0)
-        Log.i("cs", "installed ${item.name} v${item.version}")
-        return true
+        // JVM jars first: they mount instantly (their -jvm bypass); .cs3 needs conversion.
+        val ordered = item.payloadUrls.sortedBy {
+            if (it.substringBefore('?').endsWith(".jar", ignoreCase = true)) 0 else 1
+        }
+        for (u in ordered) {
+            val ext = if (u.substringBefore('?').endsWith(".jar", ignoreCase = true)) ".jar" else ".cs3"
+            val dest = File(dir, "payload$ext")
+            val won = Installer.downloadToFile(listOf(u), dest, 64L * 1024 * 1024) {
+                onProgress(0.05 + it * 0.8)
+            } ?: continue
+            onProgress(0.9)
+            if (!validatePayloadFile(dest, internalName)) {
+                Log.w("cs", "payload failed validation: $won")
+                runCatching { dest.delete() }
+                continue
+            }
+            // Drop superseded sibling payloads (e.g. old .cs3 replaced by canonical .jar).
+            dir.listFiles()
+                ?.filter { it.isFile && it != dest && (it.name.endsWith(".jar") || it.name.endsWith(".cs3")) }
+                ?.forEach { runCatching { it.delete() } }
+            File(dir, "meta.json").writeText(
+                """{"version":"${(item.version ?: "").replace("\"", "")}","name":"${item.name.replace("\"", "")}"}""",
+            )
+            onProgress(1.0)
+            Log.i("cs", "installed ${item.name} v${item.version} from $won")
+            return dir
+        }
+        return null
+    }
+
+    /** Archive integrity check on the downloaded file (mirrors upstream). */
+    private fun validatePayloadFile(file: File, internalName: String): Boolean {
+        if (!file.exists() || file.length() < 100L) return false
+        return try {
+            ZipFile(file).use { z ->
+                val manifestEntry = z.getEntry("manifest.json")
+                if (manifestEntry != null) {
+                    val text = z.getInputStream(manifestEntry).use { it.readBytes().toString(Charsets.UTF_8) }
+                    val o = json.parseToJsonElement(text).jsonObject
+                    val listed = o["internalName"]?.jsonPrimitive?.contentOrNull
+                    val listedName = o["name"]?.jsonPrimitive?.contentOrNull
+                    if (internalName.isNotBlank() &&
+                        !listed.equals(internalName, ignoreCase = true) &&
+                        !listedName.equals(internalName, ignoreCase = true)
+                    ) return false
+                }
+                val hasDex = z.getEntry("classes.dex") != null
+                val hasClasses = z.entries().asSequence().any { it.name.endsWith(".class") }
+                // .jar payloads must carry JVM classes; .cs3 must carry dex or classes.
+                if (file.name.endsWith(".jar")) hasClasses else (hasDex || hasClasses || manifestEntry != null)
+            }
+        } catch (_: Throwable) {
+            false
+        }
     }
 
     private fun readManifestBytes(payload: ByteArray): Map<String, String?>? {
@@ -206,47 +240,61 @@ object CsEngine : Engine {
         val dirs = root.listFiles()?.filter { it.isDirectory } ?: return@withContext emptyList()
         val out = mutableListOf<Provider>()
         for (dir in dirs) {
-            val payload = payloadFile(dir) ?: continue
             try {
-                val bytes = payload.readBytes()
-                val manifest = readManifestBytes(bytes)
-                val version = manifest?.get("version") ?: payload.length().toString()
-                val key = "cs-${Installer.sanitize(dir.name)}-$version"
-                val loaded = Dex.load(bytes, key)
-                val candidates = listOfNotNull(manifest?.get("pluginClassName")).ifEmpty {
-                    Dex.scanSubtypes(Dex.jarFile(key), "com/lagradost/cloudstream3/plugins/BasePlugin")
-                }
-                if (candidates.isEmpty()) continue
-                val before = APIHolder.allProviders.snapshot()
-                var loadedAny = false
-                for (className in candidates) {
-                    val inst = runCatching {
-                        val cls = loaded.loader.loadClass(className)
-                        cls.getDeclaredConstructor().newInstance() as? BasePlugin
-                    }.getOrNull() ?: continue
-                    inst.filename = dir.name
-                    if (inst is Plugin) {
-                        inst.activity = DesktopContext.get()
-                        runCatching { inst.load(inst.activity) }.exceptionOrNull()?.let {
-                            runCatching { inst.load() }
-                        }
-                    } else {
-                        runCatching { inst.load() }.getOrThrow()
-                    }
-                    loadedAny = true
-                }
-                if (!loadedAny) continue
-                val after = APIHolder.allProviders.snapshot()
-                val fresh = after.filter { a -> before.none { it === a } }
-                for (api in fresh) {
-                    runCatching { api.init() }
-                    out += CsProvider(api)
-                }
+                out += mountDir(dir)
             } catch (t: Throwable) {
                 Log.w("cs", "plugin ${dir.name} failed: ${t.message}")
             }
         }
         out
+    }
+
+    /**
+     * Mount ONE plugin dir (hot-mount a fresh install without rescanning
+     * everything — the install-in-a-second path). Runs on IO, never throws
+     * for a bad payload (returns empty).
+     */
+    fun mountDir(dir: File): List<Provider> {
+        val payload = payloadFile(dir) ?: return emptyList()
+        return try {
+            val bytes = payload.readBytes()
+            val manifest = readManifestBytes(bytes)
+            val version = manifest?.get("version") ?: payload.length().toString()
+            val key = "cs-${Installer.sanitize(dir.name)}-$version"
+            val loaded = Dex.load(bytes, key)
+            val candidates = listOfNotNull(manifest?.get("pluginClassName")).ifEmpty {
+                Dex.scanSubtypes(Dex.jarFile(key), "com/lagradost/cloudstream3/plugins/BasePlugin")
+            }
+            if (candidates.isEmpty()) return emptyList()
+            val before = APIHolder.allProviders.snapshot()
+            var loadedAny = false
+            for (className in candidates) {
+                val inst = runCatching {
+                    val cls = loaded.loader.loadClass(className)
+                    cls.getDeclaredConstructor().newInstance() as? BasePlugin
+                }.getOrNull() ?: continue
+                inst.filename = dir.name
+                if (inst is Plugin) {
+                    inst.activity = DesktopContext.get()
+                    runCatching { inst.load(inst.activity) }.exceptionOrNull()?.let {
+                        runCatching { inst.load() }
+                    }
+                } else {
+                    runCatching { inst.load() }.getOrThrow()
+                }
+                loadedAny = true
+            }
+            if (!loadedAny) return emptyList()
+            val after = APIHolder.allProviders.snapshot()
+            val fresh = after.filter { a -> before.none { it === a } }
+            for (api in fresh) {
+                runCatching { api.init() }
+            }
+            fresh.map { CsProvider(it) }
+        } catch (t: Throwable) {
+            Log.w("cs", "plugin ${dir.name} failed: ${t.message}")
+            emptyList()
+        }
     }
 }
 

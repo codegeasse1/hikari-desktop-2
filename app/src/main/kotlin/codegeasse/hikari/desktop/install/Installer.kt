@@ -63,6 +63,23 @@ object Installer {
         }
     }
 
+    /** Stream mirrors straight to [dest] (atomic tmp+rename inside Net). First success wins. */
+    suspend fun downloadToFile(urls: List<String>, dest: File, maxBytes: Long, onProgress: (Double) -> Unit): String? {
+        for (u in urls) {
+            runCatching { dest.delete() }
+            runCatching { File(dest.parentFile, dest.name + ".part").delete() }
+            val ok = try {
+                Net.download(u, dest, maxBytes = maxBytes) { onProgress(it.coerceIn(0.0, 1.0)) }
+            } catch (_: Throwable) {
+                false
+            }
+            if (ok && dest.exists() && dest.length() > 100L) return u
+            runCatching { dest.delete() }
+            runCatching { File(dest.parentFile, dest.name + ".part").delete() }
+        }
+        return null
+    }
+
     fun enqueue(job: InstallJob, work: suspend () -> Unit) {
         jobs[job.key] = job
         ping()
