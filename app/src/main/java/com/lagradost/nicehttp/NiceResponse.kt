@@ -1,9 +1,7 @@
 package com.lagradost.nicehttp
 
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import okhttp3.toResponseBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 
@@ -139,5 +137,12 @@ class NiceBody(private val data: ByteArray) {
     fun close() = Unit
 }
 
-private fun ByteArray.toResponseBodyLenient(): okhttp3.ResponseBody =
-    this.toRequestBody("application/octet-stream".toMediaTypeOrNull())
+private fun ByteArray.toResponseBodyLenient(): okhttp3.ResponseBody {
+    val bytes = this
+    val type = "application/octet-stream".toMediaTypeOrNull()
+    return object : okhttp3.ResponseBody() {
+        override fun contentType(): okhttp3.MediaType? = type
+        override fun contentLength(): Long = bytes.size.toLong()
+        override fun source(): okio.BufferedSource = okio.Buffer().write(bytes)
+    }
+}
