@@ -12,6 +12,7 @@ import com.lagradost.cloudstream3.USER_AGENT
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.mvvm.logError
 import com.lagradost.cloudstream3.newSubtitleFile
+import com.lagradost.cloudstream3.utils.Coroutines.atomicListOf
 import com.lagradost.nicehttp.NiceResponse
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
@@ -139,7 +140,7 @@ open class DrmExtractorLink private constructor(
         uuid: kotlin.uuid.Uuid = CLEARKEY_DRM_UUID, kty: String? = "oct",
         keyRequestParameters: HashMap<String, String> = hashMapOf(), licenseUrl: String? = null,
     ) : this(source, name, url, referer ?: "", quality ?: Qualities.Unknown.value, headers, extractorData,
-        type ?: inferTypeFromUrl(url), kid, key, uuid, keyRequestParameters, kty, licenseUrl)
+        type ?: inferTypeFromUrl(url), kid, key, uuid, kty, keyRequestParameters, licenseUrl)
 
     @Deprecated("Use newDrmExtractorLink", level = DeprecationLevel.ERROR)
     constructor(
@@ -148,7 +149,7 @@ open class DrmExtractorLink private constructor(
         kid: String? = null, key: String? = null, uuid: kotlin.uuid.Uuid = CLEARKEY_DRM_UUID,
         kty: String? = "oct", keyRequestParameters: HashMap<String, String> = hashMapOf(), licenseUrl: String? = null,
     ) : this(source, name, url, referer, quality, headers, extractorData, type ?: inferTypeFromUrl(url),
-        kid, key, uuid, keyRequestParameters, kty, licenseUrl)
+        kid, key, uuid, kty, keyRequestParameters, licenseUrl)
 
     @Deprecated(message = "Use Kotlin Uuid", level = DeprecationLevel.HIDDEN)
     fun setUuid(uuid: java.util.UUID) {

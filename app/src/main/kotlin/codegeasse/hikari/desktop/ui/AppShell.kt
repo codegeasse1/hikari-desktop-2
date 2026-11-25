@@ -39,7 +39,7 @@ object AppShell {
         else -> null
     }
 
-    fun create(stage: Stage): Node {
+    fun create(stage: Stage): javafx.scene.Parent {
         this.stage = stage
         content = StackPane().apply { styleClass.add("content") }
 

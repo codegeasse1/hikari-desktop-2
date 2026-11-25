@@ -1,5 +1,7 @@
 package com.lagradost.nicehttp
 
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
@@ -70,13 +72,13 @@ class NiceResponse(val okhttpResponse: Response, val parser: ResponseParser?) {
         }
     }
 
-    suspend inline fun <reified T : Any> parsed(): T {
-        return parser!!.parse(textSuspend(), T::class)
+    suspend inline fun <reified T : Any> parsedSuspended(): T {
+        return parser!!.parse(text(), T::class)
     }
 
-    suspend inline fun <reified T : Any> parsedSafe(): T? {
+    suspend inline fun <reified T : Any> parsedSafeSuspended(): T? {
         return try {
-            parser!!.parseSafe(textSuspend(), T::class)
+            parser!!.parseSafe(text(), T::class)
         } catch (e: Exception) {
             e.printStackTrace()
             null
@@ -90,8 +92,6 @@ class NiceResponse(val okhttpResponse: Response, val parser: ResponseParser?) {
         }
         return rawBytes.toString(Charsets.UTF_8)
     }
-
-    private suspend fun textSuspend(): String = text()
 
     suspend fun textLarge(): String = rawBytes.toString(Charsets.UTF_8)
 
@@ -110,11 +110,11 @@ class NiceResponse(val okhttpResponse: Response, val parser: ResponseParser?) {
         }
     }
 
-    suspend inline fun <reified T : Any> parsedLarge(): T {
+    suspend inline fun <reified T : Any> parsedLargeSuspended(): T {
         return parser!!.parse(textLarge(), T::class)
     }
 
-    suspend inline fun <reified T : Any> parsedSafeLarge(): T? {
+    suspend inline fun <reified T : Any> parsedSafeLargeSuspended(): T? {
         return try {
             parser!!.parseSafe(textLarge(), T::class)
         } catch (e: Exception) {
@@ -138,10 +138,5 @@ class NiceBody(private val data: ByteArray) {
     fun close() = Unit
 }
 
-private fun ByteArray.toResponseBodyLenient(): okhttp3.ResponseBody? {
-    return runCatching {
-        okhttp3.ResponseBody.create(this, okhttp3.MediaType.parse("application/octet-stream"))
-    }.getOrNull() ?: runCatching {
-        this.toResponseBody("application/octet-stream".toMediaTypeOrNull())
-    }.getOrNull()
-}
+private fun ByteArray.toResponseBodyLenient(): okhttp3.ResponseBody =
+    this.toRequestBody("application/octet-stream".toMediaTypeOrNull())

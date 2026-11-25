@@ -25,9 +25,9 @@ fun getData(
     data: Map<String, String>?,
     files: List<NiceFile>?,
     json: Any?,
-    requestBody: RequestBody?,
+    requestBody: okhttp3.RequestBody?,
     responseParser: ResponseParser?,
-): RequestBody? {
+): okhttp3.RequestBody? {
     if (cantHaveBody.contains(method.uppercase())) return null
     if (requestBody != null) return requestBody
 

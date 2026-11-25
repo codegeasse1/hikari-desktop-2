@@ -5,6 +5,8 @@ open class AtomicList<T>(private val delegate: List<T> = emptyList()) : List<T> 
 
     fun <R> withLock(block: () -> R): R = synchronized(lock) { block() }
 
+    fun snapshot(): List<T> = synchronized(lock) { delegate.toList() }
+
     suspend fun <R> withLockSuspend(block: suspend () -> R): R = block()
 
     fun filter(predicate: (T) -> Boolean): AtomicList<T> = synchronized(lock) { AtomicList(delegate.filter(predicate)) }

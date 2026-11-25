@@ -215,7 +215,7 @@ object CsEngine : Engine {
                     Dex.scanSubtypes(Dex.jarFile(key), "com/lagradost/cloudstream3/plugins/BasePlugin")
                 }
                 if (candidates.isEmpty()) continue
-                val before = APIHolder.allProviders.withLock { toList() }
+                val before = APIHolder.allProviders.snapshot()
                 var loadedAny = false
                 for (className in candidates) {
                     val inst = runCatching {
@@ -234,7 +234,7 @@ object CsEngine : Engine {
                     loadedAny = true
                 }
                 if (!loadedAny) continue
-                val after = APIHolder.allProviders.withLock { toList() }
+                val after = APIHolder.allProviders.snapshot()
                 val fresh = after.filter { a -> before.none { it === a } }
                 for (api in fresh) {
                     runCatching { api.init() }

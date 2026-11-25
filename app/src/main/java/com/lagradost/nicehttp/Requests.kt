@@ -30,7 +30,7 @@ fun requestCreator(
     data: Map<String, String>? = null,
     files: List<NiceFile>? = null,
     json: Any? = null,
-    requestBody: RequestBody? = null,
+    requestBody: okhttp3.RequestBody? = null,
     cacheTime: Int? = null,
     cacheUnit: TimeUnit? = null,
     responseParser: ResponseParser? = null,
@@ -38,7 +38,7 @@ fun requestCreator(
     return Request.Builder()
         .url(addParamsToUrl(url, params))
         .headers(getHeaders(headers, referer, cookies))
-        .method(method, getData(method, data, files, json, requestBody?.toOkHttp(), responseParser))
+        .method(method, getData(method, data, files, json, requestBody, responseParser))
         .apply {
             if (cacheTime != null && cacheUnit != null) this.cacheControl(getCache(cacheTime, cacheUnit))
         }
@@ -77,7 +77,7 @@ open class Requests(
         timeout: Long,
         allowRedirects: Boolean,
         verify: Boolean,
-        interceptor: Interceptor?,
+        interceptor: okhttp3.Interceptor?,
         cacheTime: Int,
     ): OkHttpClient {
         val builder = baseClient.newBuilder()
@@ -110,17 +110,17 @@ open class Requests(
         data: Map<String, String>? = defaultData,
         files: List<NiceFile>? = null,
         json: Any? = null,
-        requestBody: RequestBody? = null,
+        requestBody: okhttp3.RequestBody? = null,
         allowRedirects: Boolean = true,
         cacheTime: Int = defaultCacheTime,
         cacheUnit: TimeUnit = defaultCacheTimeUnit,
         timeout: Long = defaultTimeOut,
-        interceptor: Interceptor? = null,
+        interceptor: okhttp3.Interceptor? = null,
         verify: Boolean = true,
         responseParser: ResponseParser? = this.responseParser,
     ): NiceResponse {
         val client = buildClient(timeout, allowRedirects, verify, interceptor, cacheTime)
-        val request = requestCreator(method, url, defaultHeaders + headers, referer ?: defaultReferer, params, defaultCookies + cookies, data, files, json, requestBody?.toOkHttp(), cacheTime, cacheUnit, responseParser)
+        val request = requestCreator(method, url, defaultHeaders + headers, referer ?: defaultReferer, params, defaultCookies + cookies, data, files, json, requestBody, cacheTime, cacheUnit, responseParser)
         val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             client.newCall(request).execute()
         }
@@ -137,7 +137,7 @@ open class Requests(
         cacheTime: Int = defaultCacheTime,
         cacheUnit: TimeUnit = defaultCacheTimeUnit,
         timeout: Long = defaultTimeOut,
-        interceptor: Interceptor? = null,
+        interceptor: okhttp3.Interceptor? = null,
         verify: Boolean = true,
         responseParser: ResponseParser? = this.responseParser,
     ): NiceResponse {
@@ -153,12 +153,12 @@ open class Requests(
         data: Map<String, String>? = defaultData,
         files: List<NiceFile>? = null,
         json: Any? = null,
-        requestBody: RequestBody? = null,
+        requestBody: okhttp3.RequestBody? = null,
         allowRedirects: Boolean = true,
         cacheTime: Int = defaultCacheTime,
         cacheUnit: TimeUnit = defaultCacheTimeUnit,
         timeout: Long = defaultTimeOut,
-        interceptor: Interceptor? = null,
+        interceptor: okhttp3.Interceptor? = null,
         verify: Boolean = true,
         responseParser: ResponseParser? = this.responseParser,
     ): NiceResponse {
@@ -174,12 +174,12 @@ open class Requests(
         data: Map<String, String>? = defaultData,
         files: List<NiceFile>? = null,
         json: Any? = null,
-        requestBody: RequestBody? = null,
+        requestBody: okhttp3.RequestBody? = null,
         allowRedirects: Boolean = true,
         cacheTime: Int = defaultCacheTime,
         cacheUnit: TimeUnit = defaultCacheTimeUnit,
         timeout: Long = defaultTimeOut,
-        interceptor: Interceptor? = null,
+        interceptor: okhttp3.Interceptor? = null,
         verify: Boolean = true,
         responseParser: ResponseParser? = this.responseParser,
     ): NiceResponse {
@@ -195,12 +195,12 @@ open class Requests(
         data: Map<String, String>? = defaultData,
         files: List<NiceFile>? = null,
         json: Any? = null,
-        requestBody: RequestBody? = null,
+        requestBody: okhttp3.RequestBody? = null,
         allowRedirects: Boolean = true,
         cacheTime: Int = defaultCacheTime,
         cacheUnit: TimeUnit = defaultCacheTimeUnit,
         timeout: Long = defaultTimeOut,
-        interceptor: Interceptor? = null,
+        interceptor: okhttp3.Interceptor? = null,
         verify: Boolean = true,
         responseParser: ResponseParser? = this.responseParser,
     ): NiceResponse {
@@ -217,7 +217,7 @@ open class Requests(
         cacheTime: Int = defaultCacheTime,
         cacheUnit: TimeUnit = defaultCacheTimeUnit,
         timeout: Long = defaultTimeOut,
-        interceptor: Interceptor? = null,
+        interceptor: okhttp3.Interceptor? = null,
         verify: Boolean = true,
         responseParser: ResponseParser? = this.responseParser,
     ): NiceResponse {
@@ -233,12 +233,12 @@ open class Requests(
         data: Map<String, String>? = defaultData,
         files: List<NiceFile>? = null,
         json: Any? = null,
-        requestBody: RequestBody? = null,
+        requestBody: okhttp3.RequestBody? = null,
         allowRedirects: Boolean = true,
         cacheTime: Int = defaultCacheTime,
         cacheUnit: TimeUnit = defaultCacheTimeUnit,
         timeout: Long = defaultTimeOut,
-        interceptor: Interceptor? = null,
+        interceptor: okhttp3.Interceptor? = null,
         verify: Boolean = true,
         responseParser: ResponseParser? = this.responseParser,
     ): NiceResponse {
@@ -254,12 +254,12 @@ open class Requests(
         data: Map<String, String>? = defaultData,
         files: List<NiceFile>? = null,
         json: Any? = null,
-        requestBody: RequestBody? = null,
+        requestBody: okhttp3.RequestBody? = null,
         allowRedirects: Boolean = true,
         cacheTime: Int = defaultCacheTime,
         cacheUnit: TimeUnit = defaultCacheTimeUnit,
         timeout: Long = defaultTimeOut,
-        interceptor: Interceptor? = null,
+        interceptor: okhttp3.Interceptor? = null,
         verify: Boolean = true,
         responseParser: ResponseParser? = this.responseParser,
     ): NiceResponse {
@@ -348,7 +348,7 @@ open class Requests(
         val allowRedirects: Boolean,
         val cacheSeconds: Int,
         val timeoutSeconds: Long,
-        val interceptor: Interceptor?,
+        val interceptor: okhttp3.Interceptor?,
         val verify: Boolean,
         val responseParser: ResponseParser?,
     )

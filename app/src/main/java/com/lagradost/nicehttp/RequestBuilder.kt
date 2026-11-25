@@ -60,11 +60,11 @@ class RequestBuilder internal constructor(private val requests: Requests) {
 
     var params: Map<String, String> = emptyMap()
     var allowRedirects: Boolean = true
-    var interceptor: Interceptor? = null
+    var interceptor: okhttp3.Interceptor? = null
     var verify: Boolean = true
     var files: List<NiceFile>? = null
     var json: Any? = null
-    var requestBody: RequestBody? = null
+    var requestBody: okhttp3.RequestBody? = null
 
     fun header(key: String, value: String) {
         _headers = ((_headers ?: requests.defaultHeaders) + (key to value))
