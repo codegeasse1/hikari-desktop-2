@@ -1,3 +1,5 @@
+@file:OptIn(kotlin.uuid.ExperimentalUuidApi::class)
+
 package com.lagradost.cloudstream3.utils
 
 import com.lagradost.cloudstream3.APIHolder
@@ -56,12 +58,12 @@ val CLEARKEY_DRM_UUID = kotlin.uuid.Uuid.fromLongs(-0x1d8e62a7567a4c37L, 0x781AB
 val WIDEVINE_DRM_UUID = kotlin.uuid.Uuid.fromLongs(-0x121074568629b532L, -0x5c37d8232ae2de13L)
 val PLAYREADY_DRM_UUID = kotlin.uuid.Uuid.fromLongs(-0x65fb0f8667bfbd7aL, -0x546d19a41f77a06bL)
 
-val CLEARKEY_UUID = java.util.UUID(CLEARKEY_DRM_UUID.mostSignificantBits, CLEARKEY_DRM_UUID.leastSignificantBits)
-val WIDEVINE_UUID = java.util.UUID(WIDEVINE_DRM_UUID.mostSignificantBits, WIDEVINE_DRM_UUID.leastSignificantBits)
-val PLAYREADY_UUID = java.util.UUID(PLAYREADY_DRM_UUID.mostSignificantBits, PLAYREADY_DRM_UUID.leastSignificantBits)
+val CLEARKEY_UUID = java.util.UUID.fromString("e2719d58-a985-b3c9-781a-b030af78d30e")
+val WIDEVINE_UUID = java.util.UUID.fromString("edef8ba9-79d6-4ace-a3c8-27dcd51d21ed5")
+val PLAYREADY_UUID = java.util.UUID.fromString("9a04f079-9840-4286-ab92-e65be0885f95")
 
 fun kotlin.uuid.Uuid.toJavaUuid(): java.util.UUID =
-    java.util.UUID(mostSignificantBits, leastSignificantBits)
+    java.util.UUID.fromString(this.toString())
 
 fun java.util.UUID.toKotlinUuid(): kotlin.uuid.Uuid =
     kotlin.uuid.Uuid.fromLongs(mostSignificantBits, leastSignificantBits)

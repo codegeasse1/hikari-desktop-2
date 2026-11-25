@@ -3,6 +3,7 @@
     "UnusedReceiverParameter",
     "MemberVisibilityCanBePrivate",
 )
+@file:OptIn(kotlin.io.encoding.ExperimentalEncodingApi::class)
 
 package com.lagradost.cloudstream3
 
@@ -17,6 +18,8 @@ import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import com.lagradost.cloudstream3.utils.AppUtils.tryParseJson
 import com.lagradost.cloudstream3.utils.Coroutines.atomicListOf
+import com.lagradost.nicehttp.RequestBody
+import com.lagradost.nicehttp.RequestBodyTypes
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -163,11 +166,12 @@ object APIHolder {
           }
         }
         """.trimIndent().trim()
-        val data = mapOf(
+        val payload = mapOf(
             "query" to query,
             "variables" to mapOf("search" to title, "sort" to "SEARCH_MATCH", "type" to "ANIME"),
-        ).toJson().toRequestBody(RequestBodyTypes.JSON.toMediaTypeOrNull())
-        return app.post("https://graphql.anilist.co", requestBody = data).parsedSafe<AniSearch>()
+        ).toJson()
+        val body = RequestBody.text(payload, RequestBodyTypes.JSON)
+        return app.post("https://graphql.anilist.co", requestBody = body).parsedSafe<AniSearch>()
     }
 }
 
