@@ -344,7 +344,7 @@ open class Requests(
         val data: Map<String, String>?,
         val files: List<NiceFile>?,
         val json: Any?,
-        val requestBody: RequestBody?,
+        val requestBody: okhttp3.RequestBody?,
         val allowRedirects: Boolean,
         val cacheSeconds: Int,
         val timeoutSeconds: Long,

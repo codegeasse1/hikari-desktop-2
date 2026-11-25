@@ -3,6 +3,7 @@ package com.lagradost.nicehttp
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.toResponseBody
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Document
 

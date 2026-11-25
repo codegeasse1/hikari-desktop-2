@@ -6,6 +6,7 @@ import codegeasse.hikari.desktop.model.SubItem
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
@@ -522,8 +523,9 @@ object JsRun {
 
         private fun sib(args: List<String>, next: Boolean): String {
             val el = els[args.getOrNull(1)] ?: return "__NONE__"
-            val s = if (next) el.nextElementSibling() else el.previousElementSibling()
-                ?: return "__NONE__"
+            val sibEl: org.jsoup.nodes.Element? =
+                if (next) el.nextElementSibling() else el.previousElementSibling()
+            val s = sibEl ?: return "__NONE__"
             val id = args[0] + ":" + s.hashCode()
             els[id] = s
             return id

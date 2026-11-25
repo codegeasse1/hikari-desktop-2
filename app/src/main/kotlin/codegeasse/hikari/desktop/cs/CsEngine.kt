@@ -305,7 +305,7 @@ class CsProvider(val api: MainAPI) : Provider {
         }
     }
 
-    private fun loadDetail(item: MediaItem): LoadResponse? {
+    private suspend fun loadDetail(item: MediaItem): LoadResponse? {
         detailCache[item.uniqueId]?.let { return it }
         val url = item.extra["url"] ?: return null
         return try {

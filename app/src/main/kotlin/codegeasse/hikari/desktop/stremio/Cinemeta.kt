@@ -31,7 +31,7 @@ object Cinemeta {
             val metas = runCatching {
                 (json.parseToJsonElement(body).jsonObject["metas"] as? JsonArray) ?: JsonArray(emptyList())
             }.getOrDefault(JsonArray(emptyList()))
-            metas.mapNotNull { (it as? JsonObject) }.mapNotNullTo(out { m ->
+            metas.mapNotNull { it as? JsonObject }.mapNotNullTo(out) { m ->
                 cinemetaToItem(m)
             }
         }
