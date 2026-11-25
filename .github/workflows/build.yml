@@ -134,11 +134,14 @@ jobs:
         shell: bash
 
       - name: Sign installer (only when a cert secret exists)
-        if: ${{ secrets.WINDOWS_SIGNING_CERT != '' }}
         env:
           CERT_B64: ${{ secrets.WINDOWS_SIGNING_CERT }}
           CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
+          if [ -z "$CERT_B64" ]; then
+            echo "No signing cert configured - skipping."
+            exit 0
+          fi
           echo "$CERT_B64" | base64 -d > signing.pfx 2>/dev/null || echo "$CERT_B64" > signing.pfx
           SIGNTOOL=$(ls "C:/Program Files (x86)/Windows Kits/10/bin/"*/x64/signtool.exe 2>/dev/null | sort -V | tail -n 1)
           if [ -n "$SIGNTOOL" ]; then
