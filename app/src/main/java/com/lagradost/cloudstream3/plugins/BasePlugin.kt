@@ -1,0 +1,71 @@
+package com.lagradost.cloudstream3.plugins
+
+import com.fasterxml.jackson.annotation.JsonProperty
+import com.lagradost.cloudstream3.APIHolder
+import com.lagradost.cloudstream3.MainAPI
+import com.lagradost.cloudstream3.utils.ExtractorApi
+import com.lagradost.api.Log
+import com.lagradost.cloudstream3.utils.extractorApis
+import kotlinx.serialization.SerialName
+import kotlinx.serialization.Serializable
+
+const val PLUGIN_TAG = "PluginInstance"
+
+abstract class BasePlugin {
+
+    fun registerMainAPI(element: MainAPI) {
+        Log.i(PLUGIN_TAG, "Adding ${element.name} (${element.mainUrl}) MainAPI")
+        element.sourcePlugin = this.filename
+        APIHolder.allProviders.add(element)
+        APIHolder.addPluginMapping(element)
+    }
+
+    fun registerExtractorAPI(element: ExtractorApi) {
+        Log.i(PLUGIN_TAG, "Adding ${element.name} (${element.mainUrl}) ExtractorApi")
+        element.sourcePlugin = this.filename
+        extractorApis.add(element)
+    }
+
+    @Throws(Throwable::class)
+    open fun beforeUnload() {
+    }
+
+    @Throws(Throwable::class)
+    open fun load() {
+    }
+
+    @Deprecated("Renamed to `filename` to follow conventions", replaceWith = ReplaceWith("filename"), level = DeprecationLevel.ERROR)
+    var __filename: String?
+        get() = filename
+        set(value) {
+            filename = value
+        }
+    var filename: String? = null
+
+    @Serializable
+    class Manifest {
+        @JsonProperty("name") @SerialName("name")
+        var name: String? = null
+
+        @JsonProperty("pluginClassName") @SerialName("pluginClassName")
+        var pluginClassName: String? = null
+
+        @JsonProperty("version") @SerialName("version")
+        var version: Int? = null
+
+        @JsonProperty("requires") @SerialName("requires")
+        var requires: String? = null
+
+        @JsonProperty("description") @SerialName("description")
+        var description: String? = null
+
+        @JsonProperty("internalName") @SerialName("internalName")
+        var internalName: String? = null
+
+        @JsonProperty("tvTypes") @SerialName("tvTypes")
+        var tvTypes: List<String>? = null
+
+        @JsonProperty("authors") @SerialName("authors")
+        var authors: List<String>? = null
+    }
+}

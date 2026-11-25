@@ -1,0 +1,155 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      APP_VERSION: ${{ format('0.1.{0}', github.run_number) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: "8.11.1"
+          cache-disabled: true
+
+      - name: Stamp the build (real version, time, commit)
+        run: |
+          {
+            echo "package codegeasse.hikari.desktop"
+            echo ""
+            echo "/** Build identity. Rewritten by CI on every build - see .github/workflows/build.yml. */"
+            echo "object Build {"
+            echo "    const val VERSION = \"$APP_VERSION\""
+            echo "    const val DATE = \"$(date -u '+%Y-%m-%d %H:%M') UTC\""
+            echo "    const val COMMIT = \"$(git rev-parse --short HEAD)\""
+            echo "}"
+          } > app/src/main/kotlin/codegeasse/hikari/desktop/Build.kt
+          cat app/src/main/kotlin/codegeasse/hikari/desktop/Build.kt
+        shell: bash
+
+      - name: Build + unit tests
+        run: |
+          set +e
+          for attempt in 1 2 3; do
+            gradle :app:build --no-daemon --stacktrace > gradle-build.log 2>&1
+            code=$?
+            if [ $code -eq 0 ]; then
+              echo "==== BUILD OK (attempt $attempt) ===="
+              exit 0
+            fi
+            if ! grep -qE "Received status code 429|Could not GET|Could not resolve|Connection reset|Read timed out|Temporary failure in name resolution" gradle-build.log; then
+              echo "==== BUILD FAILED (attempt $attempt) - real error, not retrying ===="
+              break
+            fi
+            echo "==== network flake, retrying in 20s ===="
+            sleep 20
+          done
+          grep -E "^e: " gradle-build.log | head -n 60 || true
+          tail -n 60 gradle-build.log
+          exit 1
+        shell: bash
+
+      - name: Prepare jpackage input
+        run: gradle :app:jpackageInput --no-daemon > jpackage-input.log 2>&1; tail -n 5 jpackage-input.log
+        shell: bash
+
+      - name: Bundle mpv player (video engine)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          mpv_url="https://github.com/shinchiro/mpv-winbuild-cmake/releases/download/20260814/mpv-x86_64-20260814-git-7b8915bc1d.7z"
+          if ! curl -fsSL -o mpv.7z "$mpv_url"; then
+            mpv_url=$(gh api "repos/shinchiro/mpv-winbuild-cmake/releases/latest" --jq '[.assets[].browser_download_url | select(test("mpv-x86_64-.*\\.7z$"))][0]')
+            curl -fsSL -o mpv.7z "$mpv_url"
+          fi
+          7z x -bso0 -bsp0 -ompv-tmp mpv.7z
+          mkdir -p jpackage-input/mpv
+          cp -r mpv-tmp/* jpackage-input/mpv/
+          if [ ! -f jpackage-input/mpv/mpv.exe ]; then
+            echo "::error::mpv.exe missing from the bundle"
+            exit 1
+          fi
+        shell: bash
+
+      - name: Resolve installer icon (only if present)
+        run: |
+          if [ -f packaging/hikari.ico ]; then
+            echo "ICON_FLAG=--icon packaging/hikari.ico" >> "$GITHUB_ENV"
+          else
+            echo "ICON_FLAG=" >> "$GITHUB_ENV"
+          fi
+        shell: bash
+
+      - name: Package exe (app image)
+        run: |
+          mkdir -p jpackage-input
+          cp -r app/build/jpackage-input/* jpackage-input/
+          jpackage --type app-image -n Hikari \
+            --input jpackage-input \
+            --main-jar hikari.jar \
+            --main-class codegeasse.hikari.desktop.MainKt \
+            $ICON_FLAG \
+            --java-options "-Dfile.encoding=UTF-8" \
+            --app-version "$APP_VERSION"
+          ls -la "Hikari"
+        shell: bash
+
+      - name: Install WiX (for the .exe installer)
+        run: choco install wixtoolset -y --no-progress
+        shell: bash
+
+      - name: Package .exe installer
+        run: |
+          jpackage --type exe -n Hikari \
+            --input jpackage-input \
+            --main-jar hikari.jar \
+            --main-class codegeasse.hikari.desktop.MainKt \
+            $ICON_FLAG \
+            --java-options "-Dfile.encoding=UTF-8" \
+            --app-version "$APP_VERSION" \
+            --win-menu --win-dir-chooser
+          EXE=$(ls -1 *.exe | head -n 1)
+          echo "installer: $EXE"
+          ls -la "$EXE"
+        shell: bash
+
+      - name: Sign installer (only when a cert secret exists)
+        if: ${{ secrets.WINDOWS_SIGNING_CERT != '' }}
+        env:
+          CERT_B64: ${{ secrets.WINDOWS_SIGNING_CERT }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          echo "$CERT_B64" | base64 -d > signing.pfx 2>/dev/null || echo "$CERT_B64" > signing.pfx
+          SIGNTOOL=$(ls "C:/Program Files (x86)/Windows Kits/10/bin/"*/x64/signtool.exe 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$SIGNTOOL" ]; then
+            FILE=$(ls -1 *.exe | head -n 1)
+            MSYS_NO_PATHCONV=1 "$SIGNTOOL" sign /f signing.pfx ${CERT_PASSWORD:+/p "$CERT_PASSWORD"} /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "$FILE" || true
+          fi
+          rm -f signing.pfx
+        shell: bash
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: hikari-installer
+          path: "*.exe"
