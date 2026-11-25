@@ -63,8 +63,8 @@ jobs:
             echo "==== network flake, retrying in 20s ===="
             sleep 20
           done
-          grep -E "^e: " gradle-build.log | head -n 60 || true
-          tail -n 60 gradle-build.log
+          grep -E "e: |FAILED|Execution failed|error:" gradle-build.log | head -n 80 || true
+          tail -n 30 gradle-build.log
           exit 1
         shell: bash
 
