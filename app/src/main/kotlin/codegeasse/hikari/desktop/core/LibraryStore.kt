@@ -20,6 +20,8 @@ object LibraryStore {
         val season: Int = 0,
         val episode: Int = 0,
         val episodeId: String? = null,
+        /** Watched fraction 0..1 of the current episode (<0 = unknown). */
+        val progress: Double = -1.0,
         val at: Long = System.currentTimeMillis(),
     )
 
@@ -36,6 +38,7 @@ object LibraryStore {
             season = this["season"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0,
             episode = this["episode"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: 0,
             episodeId = this["episodeId"]?.jsonPrimitive?.contentOrNull,
+            progress = this["progress"]?.jsonPrimitive?.contentOrNull?.toDoubleOrNull() ?: -1.0,
             at = this["at"]?.jsonPrimitive?.contentOrNull?.toLongOrNull() ?: 0L,
         )
     }
@@ -49,6 +52,7 @@ object LibraryStore {
         put("season", season.toString())
         put("episode", episode.toString())
         episodeId?.let { put("episodeId", it) }
+        put("progress", progress.toString())
         put("at", at.toString())
     }
 
@@ -71,6 +75,10 @@ object LibraryStore {
     }
 
     fun clearHistory() = Stores.history.put("history", JsonArray(emptyList()))
+
+    fun removeHistory(providerId: String, id: String) {
+        write("history", read("history", 200).filterNot { it.providerId == providerId && it.id == id })
+    }
 
     fun favorites(limit: Int = 500): List<Entry> = read("favorites", limit)
 

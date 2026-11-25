@@ -47,16 +47,23 @@ object Engines {
     fun engine(kind: EngineKind): Engine? = engines[kind]
 
     suspend fun reload(): List<Provider> {
-        val all = supervisorScope {
-            engines.values.map { eng ->
-                async(Dispatchers.IO) {
-                    runCatching { eng.loadProviders() }.getOrElse {
-                        Log.w("engines", "${eng.kind} load failed: ${it.message}")
-                        emptyList()
+        val all = withTimeoutOrNull(60_000L) {
+            supervisorScope {
+                engines.values.map { eng ->
+                    async(Dispatchers.IO) {
+                        withTimeoutOrNull(25_000L) {
+                            runCatching { eng.loadProviders() }.getOrElse {
+                                Log.w("engines", "${eng.kind} load failed: ${it.message}")
+                                emptyList()
+                            }
+                        } ?: run {
+                            Log.w("engines", "${eng.kind} load timed out (25s)")
+                            emptyList()
+                        }
                     }
-                }
-            }.flatMap { runCatching { it.await() }.getOrDefault(emptyList()) }
-        }
+                }.flatMap { runCatching { it.await() }.getOrDefault(emptyList()) }
+            }
+        } ?: emptyList()
         cached = all
         return all
     }
@@ -73,6 +80,37 @@ object Engines {
             }
         }.flatMap { runCatching { it.await() }.getOrDefault(emptyList()) }
             .map { row -> if (row.items.size > 14) row.copy(items = row.items.take(14)) else row }
+    }
+
+    /**
+     * Incremental home rows: each provider's rows are delivered via [onRow] the
+     * moment they arrive (Stremio board pattern — the page fills in live instead
+     * of waiting for the slowest provider). [onError] fires per failed provider
+     * so the UI can show a row-level retry instead of a global spinner.
+     * Callbacks run on IO threads; hop to FX in the UI layer.
+     */
+    suspend fun homeRowsEach(
+        maxPerProviderRows: Int = 12,
+        onRow: (Provider, CatalogRow) -> Unit,
+        onError: (Provider, String) -> Unit = { _, _ -> },
+    ) = supervisorScope {
+        current().filter { it.ref.enabled }.map { p ->
+            async(Dispatchers.IO) {
+                val rows = withTimeoutOrNull(20_000L) {
+                    runCatching { p.homeRows() }.getOrElse {
+                        onError(p, it.message?.take(140) ?: "failed")
+                        emptyList()
+                    }
+                } ?: run {
+                    onError(p, "timed out after 20s")
+                    emptyList()
+                }
+                for (row in rows.take(maxPerProviderRows)) {
+                    val trimmed = if (row.items.size > 14) row.copy(items = row.items.take(14)) else row
+                    if (trimmed.items.isNotEmpty()) onRow(p, trimmed)
+                }
+            }
+        }.forEach { runCatching { it.await() } }
     }
 
     suspend fun searchAll(query: String): List<MediaItem> = supervisorScope {

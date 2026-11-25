@@ -6,6 +6,7 @@ import codegeasse.hikari.desktop.core.Stores
 import codegeasse.hikari.desktop.engine.Engine
 import codegeasse.hikari.desktop.engine.Engines
 import codegeasse.hikari.desktop.engine.Provider
+import codegeasse.hikari.desktop.install.Installer
 import codegeasse.hikari.desktop.model.CatalogRow
 import codegeasse.hikari.desktop.model.EngineKind
 import codegeasse.hikari.desktop.model.EpisodeItem
@@ -118,6 +119,7 @@ class StremioProvider(val manifest: StManifest) : Provider {
         engine = EngineKind.STREMIO,
         name = manifest.name,
         iconUrl = manifest.logo,
+        enabled = Installer.isEnabled("stremio", "stremio|" + manifest.id),
     )
 
     private fun base(): String = manifest.transportUrl.trimEnd('/')
@@ -227,8 +229,15 @@ object StremioEngine : Engine {
     const val CINEMETA = "https://v3-cinemeta.strem.io/manifest.json"
 
     fun savedManifests(): List<String> {
+        // Written as plain strings by saveManifests; tolerate legacy {url:} objects.
         val arr = Stores.providers.readArray("stremio")
-        return arr.mapNotNull { (it as? JsonObject)?.get("url")?.jsonPrimitive?.contentOrNull }
+        return arr.mapNotNull {
+            when (it) {
+                is JsonPrimitive -> it.contentOrNull?.takeIf { s -> s.isNotBlank() }
+                is JsonObject -> it["url"]?.jsonPrimitive?.contentOrNull?.takeIf { s -> s.isNotBlank() }
+                else -> null
+            }
+        }
     }
 
     fun saveManifests(urls: List<String>) {
@@ -254,10 +263,14 @@ object StremioEngine : Engine {
             val clean = u.trim().removeSuffix("/manifest.json").trimEnd('/') + "/manifest.json"
             val body = Net.getString(clean)
             val m = body?.let { parseManifest(clean, it) }
-            if (m == null) {
-                Log.w("stremio", "manifest unreachable: $u")
-                null
-            } else StremioProvider(m)
+            when {
+                m == null -> {
+                    Log.w("stremio", "manifest unreachable: $u")
+                    null
+                }
+                !Installer.isEnabled("stremio", "stremio|" + m.id) -> null
+                else -> StremioProvider(m)
+            }
         }
     }
 }

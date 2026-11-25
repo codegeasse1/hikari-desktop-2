@@ -120,6 +120,30 @@ object Installer {
         return arr.mapNotNull { (it as? JsonPrimitive)?.content }.toSet()
     }
 
+    /**
+     * True when [remote] is a newer version than [installed]. Compares
+     * dot-separated numeric parts first ("10" > "9"); falls back to plain
+     * inequality for non-numeric schemes (commit hashes, dates).
+     */
+    fun isNewer(remote: String?, installed: String?): Boolean {
+        if (remote.isNullOrBlank()) return false
+        if (installed.isNullOrBlank()) return true
+        val r = remote.trim()
+        val i = installed.trim()
+        if (r == i) return false
+        val rn = r.split(Regex("[^0-9]+")).filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull() }
+        val in_ = i.split(Regex("[^0-9]+")).filter { it.isNotEmpty() }.mapNotNull { it.toIntOrNull() }
+        if (rn.isNotEmpty() && in_.isNotEmpty()) {
+            val n = maxOf(rn.size, in_.size)
+            for (k in 0 until n) {
+                val d = rn.getOrElse(k) { 0 } - in_.getOrElse(k) { 0 }
+                if (d != 0) return d > 0
+            }
+            return false
+        }
+        return true
+    }
+
     fun isEnabled(engine: String, id: String): Boolean = id !in disabledIds(engine)
 
     fun setEnabled(engine: String, id: String, enabled: Boolean) {

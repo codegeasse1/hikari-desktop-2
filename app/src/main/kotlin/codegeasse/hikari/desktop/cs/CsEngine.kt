@@ -99,6 +99,7 @@ object CsEngine : Engine {
                     val version = str("version") ?: o["version"]?.toString()
                     val dir = File(Stores.pluginDir("cs"), Installer.sanitize(internalName))
                     val installedPayload = payloadFile(dir) != null
+                    val installedVersion = if (installedPayload) readMetaVersion(dir) else null
                     out += ListingItem(
                         engine = EngineKind.CS,
                         repoUrl = repo,
@@ -112,7 +113,8 @@ object CsEngine : Engine {
                         } ?: emptyList(),
                         payloadUrls = listOfNotNull(jarUrl, url),
                         installed = installedPayload,
-                        installedVersion = if (installedPayload) readMetaVersion(dir) else null,
+                        installedVersion = installedVersion,
+                        hasUpdate = installedPayload && Installer.isNewer(version, installedVersion),
                     )
                 }
             }

@@ -194,4 +194,130 @@ object Ui {
     }
 
     fun providerRef(provider: Provider): String = provider.ref.name
+
+    // -- sidebar + state widgets (reference-grade chrome) ----------------------
+
+    /** Sidebar navigation row: icon + label, highlighted when selected. */
+    fun navItem(icon: String, label: String, selected: Boolean, onClick: () -> Unit): Button =
+        Button("$icon   $label").apply {
+            styleClass.add(if (selected) "nav-item-on" else "nav-item")
+            maxWidth = Double.MAX_VALUE
+            alignment = Pos.CENTER_LEFT
+            setOnAction { onClick() }
+        }
+
+    /** Loading placeholder rail: skeleton cards under a title. */
+    fun skeletonRow(title: String, cards: Int = 6): Node {
+        val row = HBox(10.0).apply { padding = Insets(2.0, 4.0, 8.0, 4.0) }
+        repeat(cards) {
+            row.children.add(
+                VBox(6.0).apply {
+                    children.add(Rectangle(150.0, 214.0).apply { styleClass.add("skel") })
+                    children.add(Rectangle(110.0, 12.0).apply { styleClass.add("skel") })
+                },
+            )
+        }
+        val scroller = ScrollPane(row).apply {
+            styleClass.add("rail-scroll")
+            isFitToHeight = true
+            hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER
+            vbarPolicy = ScrollPane.ScrollBarPolicy.NEVER
+            prefViewportHeight = 250.0
+        }
+        return VBox(6.0, title(title), scroller)
+    }
+
+    /** Row-level failure card with retry (a dead provider never blocks the page). */
+    fun errorCard(who: String, message: String, onRetry: () -> Unit): Node =
+        HBox(10.0, muted("$who: ${message.take(160)}"), spacer(), ghostBtn("↻ Retry") { onRetry() }).apply {
+            alignment = Pos.CENTER_LEFT
+            padding = Insets(10.0, 14.0, 10.0, 14.0)
+            styleClass.add("error-card")
+        }
+
+    /** Empty-page hero with a call to action (never a bare spinner). */
+    fun emptyState(title: String, body: String, actionLabel: String, onAction: () -> Unit): Node =
+        VBox(12.0).apply {
+            alignment = Pos.CENTER
+            padding = Insets(60.0, 20.0, 60.0, 20.0)
+            children.add(Label(title).apply { styleClass.add("empty-title") })
+            children.add(muted(body).apply { isWrapText = true })
+            children.add(primaryBtn(actionLabel) { onAction() })
+        }
+
+    /** Small status pill (update available, counts, quality). */
+    fun badge(text: String): Label = Label(text).apply { styleClass.add("badge") }
+
+    /** Inline install/update progress row. */
+    fun progressRow(label: String, frac: Double): Node {
+        val bar = javafx.scene.control.ProgressBar().apply {
+            progress = frac.coerceIn(0.0, 1.0)
+            prefWidth = 220.0
+            styleClass.add("job-bar")
+        }
+        return HBox(10.0, Label(label).apply { styleClass.add("job-label") }, bar).apply {
+            alignment = Pos.CENTER_LEFT
+        }
+    }
+
+    /** Section header with an optional trailing action. */
+    fun sectionHead(title: String, sub: String = "", action: Node? = null): Node {
+        val head = HBox(10.0, title(title)).apply { alignment = Pos.CENTER_LEFT }
+        if (sub.isNotBlank()) head.children.add(muted(sub))
+        head.children.add(spacer())
+        if (action != null) head.children.add(action)
+        return head
+    }
+
+    /** Continue-watching card with a watched-progress bar and a remove button. */
+    fun continueCard(
+        e: LibraryStore.Entry,
+        sub: String,
+        onOpen: (LibraryStore.Entry) -> Unit,
+        onRemove: (LibraryStore.Entry) -> Unit,
+    ): Node {
+        val fake = MediaItem(e.providerId, e.id, e.title, posterUrl = e.posterUrl, backdropUrl = e.backdropUrl)
+        val card = posterCard(fake, onClick = { onOpen(e) })
+        val under = mutableListOf<Node>()
+        if (e.progress >= 0.0) {
+            under.add(
+                javafx.scene.control.ProgressBar().apply {
+                    progress = e.progress.coerceIn(0.0, 1.0)
+                    prefWidth = 150.0
+                    maxWidth = 150.0
+                    styleClass.add("watch-bar")
+                },
+            )
+        }
+        val row = HBox(6.0, muted(sub).apply { maxWidth = 120.0 }, spacer(), ghostBtn("✕") { onRemove(e) }).apply {
+            alignment = Pos.CENTER_LEFT
+            maxWidth = 150.0
+        }
+        return VBox(6.0).apply {
+            maxWidth = 150.0
+            children.add(card)
+            children.addAll(under)
+            children.add(row)
+        }
+    }
+
+    /** Small modal dialog owned by [owner]. Returns the stage so callers can close it. */
+    fun dialog(owner: javafx.stage.Stage, title: String, body: Node, width: Double = 460.0): javafx.stage.Stage {
+        val stage = javafx.stage.Stage().apply {
+            initOwner(owner)
+            initModality(javafx.stage.Modality.APPLICATION_MODAL)
+            this.title = title
+        }
+        val root = VBox(12.0, Label(title).apply { styleClass.add("dialog-title") }, body).apply {
+            padding = Insets(16.0, 18.0, 18.0, 18.0)
+            styleClass.add("dialog")
+        }
+        stage.scene = javafx.scene.Scene(ScrollPane(root).apply {
+            styleClass.add("page-scroll")
+            isFitToWidth = true
+            hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER
+            prefViewportWidth = width
+        })
+        return stage
+    }
 }

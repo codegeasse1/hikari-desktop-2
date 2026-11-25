@@ -74,6 +74,7 @@ object Hiki : Engine {
                 val url = str("url") ?: continue
                 val dir = File(Stores.pluginDir("hiki"), Installer.sanitize(name))
                 val installed = payloadFile(dir) != null
+                val installedVersion = if (installed) readMetaVersion(dir) else null
                 out += ListingItem(
                     engine = EngineKind.HIKI,
                     repoUrl = repo,
@@ -84,7 +85,8 @@ object Hiki : Engine {
                     iconUrl = null,
                     payloadUrls = listOf(url),
                     installed = installed,
-                    installedVersion = if (installed) readMetaVersion(dir) else null,
+                    installedVersion = installedVersion,
+                    hasUpdate = installed && Installer.isNewer(str("version"), installedVersion),
                 )
             }
         }

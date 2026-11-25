@@ -30,10 +30,17 @@ object Library {
 
     private fun render(box: VBox, favs: List<LibraryStore.Entry>, hist: List<LibraryStore.Entry>) {
         box.children.clear()
-        val favRow = HBox(10.0, Ui.title("Favorites"), Ui.spacer())
-        box.children.add(favRow)
+        box.children.add(
+            HBox(10.0, Ui.title("Favorites"), Ui.spacer(), Ui.muted("${favs.size}")),
+        )
         if (favs.isEmpty()) box.children.add(Ui.muted("No favorites yet — open a title and hit ♡ Favorite."))
-        else box.children.add(Ui.section(favs.map { it.toMedia() }, 6) { open(it) })
+        else {
+            val grid = VBox(10.0)
+            for (e in favs) {
+                grid.children.add(favCard(e) { render(box, LibraryStore.favorites(), LibraryStore.history(60)) })
+            }
+            box.children.add(grid)
+        }
 
         val histRow = HBox(10.0, Ui.title("Continue Watching"), Ui.spacer())
         if (hist.isNotEmpty()) {
@@ -49,9 +56,12 @@ object Library {
             val cards = HBox(10.0)
             for (e in hist) {
                 cards.children.add(
-                    Ui.entryCard(e, if (e.season > 0 || e.episode > 0) "S${e.season} E${e.episode}" else "Continue") {
-                        open(e.toMedia())
-                    },
+                    Ui.continueCard(
+                        e,
+                        if (e.season > 0 || e.episode > 0) "S${e.season} E${e.episode}" else "Continue",
+                        { open(it.toMedia()) },
+                        { LibraryStore.removeHistory(it.providerId, it.id); render(box, LibraryStore.favorites(), LibraryStore.history(60)) },
+                    ),
                 )
             }
             box.children.add(
@@ -67,6 +77,18 @@ object Library {
 
     private fun LibraryStore.Entry.toMedia(): MediaItem =
         MediaItem(providerId, id, title, posterUrl = posterUrl, backdropUrl = backdropUrl)
+
+    private fun favCard(e: LibraryStore.Entry, onChanged: () -> Unit): Node {
+        val card = Ui.posterCard(e.toMedia(), onClick = { open(it) })
+        val row = HBox(6.0, Ui.muted(e.title.take(24)), Ui.spacer(), Ui.ghostBtn("✕") {
+            LibraryStore.toggleFavorite(e)
+            onChanged()
+        }).apply {
+            alignment = Pos.CENTER_LEFT
+            maxWidth = 150.0
+        }
+        return VBox(6.0, card, row).apply { maxWidth = 150.0 }
+    }
 
     private fun open(item: MediaItem) {
         Bg.run {

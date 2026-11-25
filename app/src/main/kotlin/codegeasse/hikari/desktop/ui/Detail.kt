@@ -16,6 +16,7 @@ import javafx.scene.control.ScrollPane
 import javafx.scene.image.ImageView
 import javafx.scene.layout.FlowPane
 import javafx.scene.layout.HBox
+import javafx.scene.layout.Priority
 import javafx.scene.layout.StackPane
 import javafx.scene.layout.VBox
 
@@ -89,6 +90,12 @@ object Detail {
     }
 
     private fun overviewRow(full: MediaItem, providerName: String): Node {
+        val facts = listOfNotNull(
+            full.year?.toString(),
+            full.rating?.let { "★ %.1f".format(it) },
+            full.kind.name.lowercase().replaceFirstChar { it.uppercase() },
+            full.genres.take(4).joinToString(" • ").takeIf { it.isNotBlank() },
+        ).joinToString("  •  ")
         val overview = Label(full.overview?.take(600) ?: "No overview available.").apply {
             styleClass.add("overview")
             isWrapText = true
@@ -104,7 +111,10 @@ object Detail {
             alignment = Pos.CENTER_LEFT
             padding = Insets(0.0, 20.0, 0.0, 20.0)
         }
-        return VBox(8.0, row, overview.apply { padding = Insets(0.0, 20.0, 0.0, 20.0) })
+        return VBox(8.0, row, Label(facts).apply {
+            styleClass.add("facts")
+            padding = Insets(0.0, 20.0, 0.0, 20.0)
+        }, overview.apply { padding = Insets(0.0, 20.0, 0.0, 20.0) })
     }
 
     private fun episodeBlock(full: MediaItem, episodes: List<EpisodeItem>): Node {
@@ -130,12 +140,46 @@ object Detail {
             eps.firstOrNull()?.let { loadStreams(full, it, streamsBox) }
         }
         combo.setOnAction { combo.selectionModel.selectedItem?.let { render(it) } }
+        val resume = LibraryStore.history(200).firstOrNull { it.providerId == full.providerId && it.id == full.id }
         val head = HBox(10.0, Ui.title("Season"), combo, Ui.spacer()).apply {
             alignment = Pos.CENTER_LEFT
             padding = Insets(0.0, 20.0, 0.0, 20.0)
         }
+        if (resume != null && (resume.season > 0 || resume.episode > 0)) {
+            head.children.add(
+                Ui.primaryBtn("▶ Resume S${resume.season} E${resume.episode}") { playEpisode(full, episodes, resume.season, resume.episode) },
+            )
+        } else {
+            head.children.add(
+                Ui.primaryBtn("▶ Play S1 E1") { playEpisode(full, episodes, 1, 1) },
+            )
+        }
         render(seasons.firstOrNull() ?: 1)
         return VBox(10.0, head, grid, streamsBox)
+    }
+
+    private fun playEpisode(full: MediaItem, episodes: List<EpisodeItem>, season: Int, number: Int) {
+        val ep = episodes.filter { it.season == season }.sortedBy { it.number }
+            .minByOrNull { kotlin.math.abs(it.number - number) } ?: episodes.firstOrNull() ?: return
+        Bg.run {
+            val provider = Engines.current().firstOrNull { it.ref.id == full.providerId } ?: return@run
+            val streams = runCatching { provider.streams(full, ep) }.getOrDefault(emptyList())
+            val best = streams.sortedByDescending { streamRank(it) }.firstOrNull() ?: return@run
+            LibraryStore.touchHistory(
+                LibraryStore.Entry(full.providerId, full.id, full.title, full.posterUrl, full.backdropUrl, ep.season, ep.number, ep.id),
+            )
+            Fx.run {
+                if (!Player.play("${full.title} S${ep.season}E${ep.number}", best)) AppShell.goSettings()
+            }
+        }
+    }
+
+    /** Higher = better. Parses "1080p" style tags from quality or name; 4K wins. */
+    internal fun streamRank(s: StreamItem): Int {
+        val src = ((s.quality ?: "") + " " + s.name).lowercase()
+        if ("2160" in src || "4k" in src) return 2160
+        val m = Regex("(\\d{3,4})\\s*p?").find(src)
+        return m?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
     private fun movieStreamsBlock(full: MediaItem): Node {
@@ -167,7 +211,11 @@ object Detail {
             box.children.add(Ui.muted("No streams found for this ${if (episode == null) "title" else "episode"}."))
             return
         }
-        for (s in streams.take(40)) {
+        val sorted = streams.sortedByDescending { streamRank(it) }.take(40)
+        box.children.add(Ui.muted("${sorted.size} source${if (sorted.size == 1) "" else "s"} · best first"))
+        for (s in sorted) {
+            val q = (s.quality?.takeIf { it.isNotBlank() } ?: guessQuality(s))?.let { Ui.badge(it) }
+            val sub = if (s.subtitles.isNotEmpty()) Ui.muted("CC×${s.subtitles.size}") else Ui.muted("")
             val play = Ui.primaryBtn("▶ Play") {
                 LibraryStore.touchHistory(
                     LibraryStore.Entry(
@@ -182,10 +230,19 @@ object Detail {
                 )
                 if (!ok) AppShell.goSettings()
             }
-            val row = HBox(10.0, play, Label(s.name.take(80)).apply { styleClass.add("stream-name") }).apply {
+            val name = Label(s.name.take(80)).apply { styleClass.add("stream-name") }
+            HBox.setHgrow(name, Priority.ALWAYS)
+            val row = HBox(10.0, play).apply {
+                if (q != null) children.add(q)
+                children.addAll(name, Ui.spacer(), sub)
                 alignment = Pos.CENTER_LEFT
             }
             box.children.add(row)
         }
+    }
+
+    private fun guessQuality(s: StreamItem): String? {
+        val r = streamRank(s)
+        return if (r > 0) "${r}p" else null
     }
 }

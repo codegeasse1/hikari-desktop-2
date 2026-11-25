@@ -23,19 +23,29 @@ import javafx.scene.control.TextField
 import javafx.scene.layout.HBox
 import javafx.scene.layout.Priority
 import javafx.scene.layout.VBox
+import kotlinx.coroutines.withTimeoutOrNull
 
-/** Extension management: repos, install/update, enable toggles, jobs. */
+/**
+ * Extension management, modeled on Nuvio's Addons screen + Stremio's Addons
+ * route + CloudStream's plugin screens:
+ * - overview stats (installed / active / updates)
+ * - repositories with add/remove
+ * - installed section first (version, enable toggle, update badge, uninstall)
+ * - available section with search + install/update-all
+ * - every async load has an error state with retry — never a stuck spinner
+ */
 object Extensions {
     fun build(): Node {
         val tabs = TabPane().apply {
             styleClass.add("tabs")
             tabClosingPolicy = TabPane.TabClosingPolicy.UNAVAILABLE
         }
-        val csTab = Tab("CloudStream", csPane())
-        val hikiTab = Tab("Hikari", hikiPane())
-        val nuvioTab = Tab("Nuvio", nuvioPane())
-        val stremioTab = Tab("Stremio", stremioPane())
-        tabs.tabs.addAll(csTab, hikiTab, nuvioTab, stremioTab)
+        tabs.tabs.addAll(
+            Tab("CloudStream", storePane(EngineKind.CS)),
+            Tab("Hikari", storePane(EngineKind.HIKI)),
+            Tab("Nuvio", nuvioPane()),
+            Tab("Stremio", stremioPane()),
+        )
         Installer.onChange { Fx.run { refreshJobs() } }
         return VBox(0.0, jobsBox(), tabs).apply {
             VBox.setVgrow(tabs, Priority.ALWAYS)
@@ -56,20 +66,23 @@ object Extensions {
 
     private fun refreshJobs() {
         val box = jobsRef ?: return
-        val jobs = Installer.snapshot()
         box.children.clear()
-        for (j in jobs) {
+        for (j in Installer.snapshot()) {
             val st = when (j.state) {
                 JobState.QUEUED -> "queued"
                 JobState.RUNNING -> if (j.progress >= 0) "${(j.progress * 100).toInt()}%" else "working…"
                 JobState.DONE -> "done"
                 JobState.FAILED -> "failed: ${j.note}"
             }
-            box.children.add(
-                HBox(8.0, Label("⬇ ${j.label}").apply { styleClass.add("job-label") }, Ui.muted(st)).apply {
-                    alignment = Pos.CENTER_LEFT
-                },
-            )
+            if (j.state == JobState.RUNNING && j.progress >= 0) {
+                box.children.add(Ui.progressRow("⬇ ${j.label}", j.progress))
+            } else {
+                box.children.add(
+                    HBox(8.0, Label("⬇ ${j.label}").apply { styleClass.add("job-label") }, Ui.muted(st)).apply {
+                        alignment = Pos.CENTER_LEFT
+                    },
+                )
+            }
         }
     }
 
@@ -121,7 +134,10 @@ object Extensions {
             styleClass.add("muted")
             isWrapText = true
         }
-        val left = VBox(2.0, HBox(8.0, name, ver), desc)
+        val badges = HBox(6.0).apply { alignment = Pos.CENTER_LEFT }
+        if (item.hasUpdate) badges.children.add(Ui.badge("update available"))
+        if (item.installed) badges.children.add(Ui.badge("v${item.installedVersion ?: "?"} installed"))
+        val left = VBox(2.0, HBox(8.0, name, ver, badges), desc)
         HBox.setHgrow(left, Priority.ALWAYS)
         val row = HBox(8.0, left)
         row.alignment = Pos.CENTER_LEFT
@@ -133,8 +149,7 @@ object Extensions {
             val btnLabel = if (item.hasUpdate) "Update" else "Reinstall"
             row.children.addAll(
                 toggle,
-                Ui.muted(if (item.hasUpdate) "update available" else "installed"),
-                Ui.ghostBtn(btnLabel) { onInstall() },
+                (if (item.hasUpdate) Ui.primaryBtn(btnLabel) { onInstall() } else Ui.ghostBtn(btnLabel) { onInstall() }),
                 Ui.ghostBtn("Uninstall") { onUninstall() },
             )
         } else {
@@ -152,115 +167,142 @@ object Extensions {
         hbarPolicy = ScrollPane.ScrollBarPolicy.NEVER
     }
 
-    // -- CloudStream -----------------------------------------------------------
+    // -- CloudStream / Hikari store panes (same shape) --------------------------
 
-    private fun csPane(): Node {
+    private fun storePane(kind: EngineKind): Node {
         val box = VBox(10.0).apply { padding = Insets(10.0, 6.0, 20.0, 6.0) }
+        val isCs = kind == EngineKind.CS
+        val repoUrls: () -> List<String> = if (isCs) CsEngine::repoUrls else Hiki::repoUrls
+        val saveRepos: (List<String>) -> Unit = if (isCs) CsEngine::saveRepos else Hiki::saveRepos
+        val fetch: suspend () -> List<ListingItem> = if (isCs) ({ CsEngine.listings() }) else ({ Hiki.listings() })
+        val engineTag = if (isCs) "cs" else "hiki"
+
         fun rebuild() {
             box.children.clear()
-            box.children.add(section("Repositories", repoEditor(CsEngine.repoUrls(), CsEngine::saveRepos) { rebuild() }))
-            val list = VBox(8.0, Ui.muted("Loading plugin list…"))
-            box.children.add(section("Available plugins", list))
-            Bg.run {
-                val items = CsEngine.listings()
-                Fx.run { renderCsList(list, items) { rebuild() } }
+            box.children.add(section("Repositories", repoEditor(repoUrls(), saveRepos) { rebuild() }))
+            val stats = Ui.muted("Syncing…")
+            val head = HBox(10.0, Ui.title("Extensions"), Ui.spacer(), stats).apply {
+                alignment = Pos.CENTER_LEFT
             }
-            box.children.add(
-                HBox(8.0, Ui.ghostBtn("⟳ Reload providers") { Bg.run { Engines.reload() } }).apply {
-                    alignment = Pos.CENTER_LEFT
-                },
-            )
+            box.children.add(head)
+            val body = VBox(8.0, Ui.skeletonRow("Loading…", 4))
+            box.children.add(body)
+            Bg.run {
+                val items = withTimeoutOrNull(60_000L) { runCatching { fetch() }.getOrNull() }
+                Fx.run {
+                    if (items == null) {
+                        body.children.setAll(
+                            Ui.errorCard("Sync", "repository unreachable or timed out") { rebuild() },
+                        )
+                        stats.text = "sync failed"
+                    } else {
+                        renderStoreList(kind, engineTag, body, items, stats) { rebuild() }
+                    }
+                }
+            }
         }
         rebuild()
         return scrollOf(box)
     }
 
-    private fun renderCsList(list: VBox, items: List<ListingItem>, onChanged: () -> Unit) {
-        list.children.clear()
-        if (items.isEmpty()) {
-            list.children.add(Ui.muted("No plugins found — check the repo URLs above."))
-            return
+    private fun renderStoreList(
+        kind: EngineKind,
+        engineTag: String,
+        body: VBox,
+        items: List<ListingItem>,
+        stats: Label,
+        onChanged: () -> Unit,
+    ) {
+        body.children.clear()
+        val installed = items.filter { it.installed }
+        val updates = installed.filter { it.hasUpdate }
+        val active = installed.count { Installer.isEnabled(engineTag, it.id) }
+        stats.text = "${installed.size} installed · $active active · ${updates.size} update${if (updates.size == 1) "" else "s"}"
+        // Filter + update-all bar.
+        val filter = TextField().apply {
+            promptText = "Filter extensions…"
+            styleClass.add("search")
+            prefColumnCount = 30
         }
-        for (it in items.sortedBy { it.name.lowercase() }) {
-            list.children.add(
-                listingRow(
-                    it,
-                    enabled = Installer.isEnabled("cs", it.id),
-                    onToggle = { en -> Installer.setEnabled("cs", it.id, en) },
-                    onInstall = { installCs(it, onChanged) },
-                    onUninstall = {
-                        Installer.uninstall("cs", it.id.removePrefix("cs|"))
-                        onChanged()
-                    },
-                ),
-            )
-        }
-    }
-
-    private fun installCs(item: ListingItem, onChanged: () -> Unit) {
-        val job = InstallJob("cs:${item.id}", item.name)
-        job.state = JobState.RUNNING
-        Installer.enqueue(job) {
-            Installer.progress(job.key, 0.2, "downloading")
-            val ok = CsEngine.install(item) { Installer.progress(job.key, 0.2 + it * 0.7, "downloading") }
-            if (!ok) throw IllegalStateException("download or validation failed")
-            Installer.progress(job.key, 0.95, "reloading")
-            Engines.reload()
-            Fx.run { onChanged() }
-        }
-    }
-
-    // -- Hikari ----------------------------------------------------------------
-
-    private fun hikiPane(): Node {
-        val box = VBox(10.0).apply { padding = Insets(10.0, 6.0, 20.0, 6.0) }
-        fun rebuild() {
-            box.children.clear()
-            box.children.add(section("Repositories", repoEditor(Hiki.repoUrls(), Hiki::saveRepos) { rebuild() }))
-            val list = VBox(8.0, Ui.muted("Loading plugin list…"))
-            box.children.add(section("Available plugins", list))
-            Bg.run {
-                val items = Hiki.listings()
-                Fx.run { renderHikiList(list, items) { rebuild() } }
-            }
-            box.children.add(
-                HBox(8.0, Ui.ghostBtn("⟳ Reload providers") { Bg.run { Engines.reload() } }).apply {
-                    alignment = Pos.CENTER_LEFT
+        val bar = HBox(8.0, filter).apply { alignment = Pos.CENTER_LEFT }
+        if (updates.isNotEmpty()) {
+            bar.children.add(
+                Ui.primaryBtn("Update all (${updates.size})") {
+                    for (u in updates) installListing(kind, engineTag, u, onChanged)
                 },
             )
         }
-        rebuild()
-        return scrollOf(box)
+        body.children.add(bar)
+        val list = VBox(8.0)
+        body.children.add(list)
+        fun render() {
+            val q = filter.text.trim().lowercase()
+            fun match(it: ListingItem) = q.isEmpty() || it.name.lowercase().contains(q) ||
+                (it.description?.lowercase()?.contains(q) == true)
+            list.children.clear()
+            val inst = installed.filter(::match).sortedBy { it.name.lowercase() }
+            val avail = items.filter { !it.installed && match(it) }.sortedBy { it.name.lowercase() }
+            if (inst.isNotEmpty()) {
+                list.children.add(Ui.sectionHead("Installed", "${inst.size}"))
+                for (it in inst) {
+                    list.children.add(
+                        listingRow(
+                            it,
+                            enabled = Installer.isEnabled(engineTag, it.id),
+                            onToggle = { en ->
+                                Installer.setEnabled(engineTag, it.id, en)
+                                Bg.run {
+                                    Engines.reload()
+                                    Fx.run { onChanged() }
+                                }
+                            },
+                            onInstall = { installListing(kind, engineTag, it, onChanged) },
+                            onUninstall = {
+                                Installer.uninstall(engineTag, it.id.removePrefix("$engineTag|"))
+                                Bg.run {
+                                    Engines.reload()
+                                    Fx.run { onChanged() }
+                                }
+                            },
+                        ),
+                    )
+                }
+            }
+            if (avail.isNotEmpty()) {
+                list.children.add(Ui.sectionHead("Available", "${avail.size}"))
+                for (it in avail.take(300)) {
+                    list.children.add(
+                        listingRow(
+                            it,
+                            enabled = true,
+                            onToggle = {},
+                            onInstall = { installListing(kind, engineTag, it, onChanged) },
+                            onUninstall = {},
+                        ),
+                    )
+                }
+            }
+            if (inst.isEmpty() && avail.isEmpty()) {
+                list.children.add(
+                    if (q.isEmpty()) Ui.muted("No plugins found — check the repo URLs above.")
+                    else Ui.muted("No extensions match \"$q\"."),
+                )
+            }
+        }
+        filter.textProperty().addListener { _, _, _ -> render() }
+        render()
     }
 
-    private fun renderHikiList(list: VBox, items: List<ListingItem>, onChanged: () -> Unit) {
-        list.children.clear()
-        if (items.isEmpty()) {
-            list.children.add(Ui.muted("No plugins found — check the repo URLs above."))
-            return
-        }
-        for (it in items.sortedBy { it.name.lowercase() }) {
-            list.children.add(
-                listingRow(
-                    it,
-                    enabled = Installer.isEnabled("hiki", it.id),
-                    onToggle = { en -> Installer.setEnabled("hiki", it.id, en) },
-                    onInstall = { installHiki(it, onChanged) },
-                    onUninstall = {
-                        Installer.uninstall("hiki", it.id.removePrefix("hiki|"))
-                        onChanged()
-                    },
-                ),
-            )
-        }
-    }
-
-    private fun installHiki(item: ListingItem, onChanged: () -> Unit) {
-        val job = InstallJob("hiki:${item.id}", item.name)
+    private fun installListing(kind: EngineKind, engineTag: String, item: ListingItem, onChanged: () -> Unit) {
+        val job = InstallJob("$engineTag:${item.id}", "${kind.label} · ${item.name}")
         job.state = JobState.RUNNING
         Installer.enqueue(job) {
             Installer.progress(job.key, 0.2, "downloading")
-            val ok = Hiki.install(item) { Installer.progress(job.key, 0.2 + it * 0.7, "downloading") }
+            val ok = if (kind == EngineKind.CS) {
+                CsEngine.install(item) { Installer.progress(job.key, 0.2 + it * 0.7, "downloading") }
+            } else {
+                Hiki.install(item) { Installer.progress(job.key, 0.2 + it * 0.7, "downloading") }
+            }
             if (!ok) throw IllegalStateException("download or validation failed")
             Installer.progress(job.key, 0.95, "reloading")
             Engines.reload()
@@ -275,29 +317,37 @@ object Extensions {
         fun rebuild() {
             box.children.clear()
             box.children.add(section("Scraper manifests", repoEditor(NuvioEngine.repoUrls(), NuvioEngine::saveRepos) { rebuild() }))
-            val list = VBox(8.0, Ui.muted("Loading scrapers…"))
-            box.children.add(section("Scrapers", list))
+            val stats = Ui.muted("Loading scrapers…")
+            box.children.add(HBox(10.0, Ui.title("Scrapers"), Ui.spacer(), stats).apply { alignment = Pos.CENTER_LEFT })
+            val list = VBox(8.0, Ui.skeletonRow("Loading…", 4))
+            box.children.add(list)
             Bg.run {
-                val items = NuvioEngine.scrapers()
+                val items = withTimeoutOrNull(60_000L) { runCatching { NuvioEngine.scrapers() }.getOrNull() }
                 Fx.run {
-                    list.children.clear()
-                    if (items.isEmpty()) list.children.add(Ui.muted("No scrapers found."))
-                    for (s in items.sortedBy { it.dto.name.lowercase() }) {
-                        val toggle = CheckBox().apply {
-                            isSelected = s.enabled
-                            setOnAction { NuvioEngine.setScraperEnabled(s.dto.id, isSelected) }
+                    if (items == null) {
+                        list.children.setAll(Ui.errorCard("Scrapers", "manifests unreachable or timed out") { rebuild() })
+                        stats.text = "load failed"
+                    } else {
+                        stats.text = "${items.size} scrapers · ${items.count { it.enabled }} enabled"
+                        list.children.clear()
+                        if (items.isEmpty()) list.children.add(Ui.muted("No scrapers found."))
+                        for (s in items.sortedBy { it.dto.name.lowercase() }) {
+                            val toggle = CheckBox().apply {
+                                isSelected = s.enabled
+                                setOnAction { NuvioEngine.setScraperEnabled(s.dto.id, isSelected) }
+                            }
+                            list.children.add(
+                                HBox(
+                                    8.0,
+                                    toggle,
+                                    VBox(
+                                        2.0,
+                                        Label(s.dto.name).apply { styleClass.add("ext-name") },
+                                        Ui.muted(listOfNotNull(s.dto.version.let { "v$it" }, s.dto.description).joinToString(" · ").take(160)),
+                                    ),
+                                ).apply { alignment = Pos.CENTER_LEFT },
+                            )
                         }
-                        list.children.add(
-                            HBox(
-                                8.0,
-                                toggle,
-                                VBox(
-                                    2.0,
-                                    Label(s.dto.name).apply { styleClass.add("ext-name") },
-                                    Ui.muted(listOfNotNull(s.dto.version.let { "v$it" }, s.dto.description).joinToString(" · ").take(160)),
-                                ),
-                            ).apply { alignment = Pos.CENTER_LEFT },
-                        )
                     }
                 }
             }
@@ -313,20 +363,51 @@ object Extensions {
         fun rebuild() {
             box.children.clear()
             val urls = StremioEngine.savedManifests()
-            val list = VBox(4.0)
-            for (u in urls) {
-                val del = Ui.ghostBtn("Remove") {
-                    if (u != StremioEngine.CINEMETA) {
-                        StremioEngine.saveManifests(urls - u)
-                        Bg.run { Engines.reload() }
-                        rebuild()
+            val stats = Ui.muted("${urls.size} addon${if (urls.size == 1) "" else "s"} · Cinemeta ships built-in")
+            box.children.add(HBox(10.0, Ui.title("Installed addons"), Ui.spacer(), stats).apply { alignment = Pos.CENTER_LEFT })
+            val list = VBox(6.0, Ui.muted("Resolving addons…"))
+            box.children.add(list)
+            Bg.run {
+                data class Card(val url: String, val name: String, val id: String?, val version: String?)
+                val cards = urls.map { u ->
+                    val m = runCatching { StremioEngine.fetchManifest(u) }.getOrNull()
+                    Card(u, m?.name ?: u, m?.id, m?.version)
+                }
+                Fx.run {
+                    list.children.clear()
+                    for (c in cards) {
+                        val key = c.id?.let { "stremio|$it" }
+                        val toggle = CheckBox().apply {
+                            isSelected = key?.let { Installer.isEnabled("stremio", it) } ?: true
+                            setOnAction {
+                                if (key != null) {
+                                    Installer.setEnabled("stremio", key, isSelected)
+                                    Bg.run { Engines.reload() }
+                                }
+                            }
+                        }
+                        val del = Ui.ghostBtn("Remove") {
+                            StremioEngine.saveManifests(urls - c.url)
+                            Bg.run {
+                                Engines.reload()
+                                Fx.run { rebuild() }
+                            }
+                        }
+                        list.children.add(
+                            HBox(
+                                8.0,
+                                toggle,
+                                VBox(
+                                    2.0,
+                                    Label(c.name).apply { styleClass.add("ext-name") },
+                                    Ui.muted(listOfNotNull(c.version?.let { "v$it" }, c.url).joinToString(" · ")),
+                                ),
+                                Ui.spacer(),
+                                del,
+                            ).apply { alignment = Pos.CENTER_LEFT },
+                        )
                     }
                 }
-                list.children.add(
-                    HBox(8.0, Label(u).apply { styleClass.add("mono") }, Ui.spacer(), del).apply {
-                        alignment = Pos.CENTER_LEFT
-                    },
-                )
             }
             val field = TextField().apply {
                 promptText = "https://…/manifest.json"
@@ -336,10 +417,10 @@ object Extensions {
             val add = Ui.primaryBtn("Add addon") {
                 val u = field.text.trim()
                 if (u.isNotBlank()) {
-                    val job = InstallJob("stremio:$u", "addon")
+                    val job = InstallJob("stremio:$u", "Stremio addon")
                     job.state = JobState.RUNNING
                     Installer.enqueue(job) {
-                        val m = StremioEngine.fetchManifest(u)
+                        StremioEngine.fetchManifest(u)
                             ?: throw IllegalStateException("not a Stremio manifest")
                         val clean = u.trim().removeSuffix("/manifest.json").trimEnd('/') + "/manifest.json"
                         StremioEngine.saveManifests(StremioEngine.savedManifests() + clean)
@@ -348,7 +429,7 @@ object Extensions {
                     }
                 }
             }
-            box.children.add(section("Installed addons (Cinemeta ships built-in)", VBox(6.0, list, HBox(8.0, field, add).apply { alignment = Pos.CENTER_LEFT })))
+            box.children.add(section("Add addon", HBox(8.0, field, add).apply { alignment = Pos.CENTER_LEFT }))
             box.children.add(Ui.muted("Addons are validated by fetching their manifest — installs take about a second."))
         }
         rebuild()

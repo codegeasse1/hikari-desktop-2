@@ -3,9 +3,11 @@ package codegeasse.hikari.desktop
 import codegeasse.hikari.desktop.cs.Dex
 import codegeasse.hikari.desktop.install.Installer
 import codegeasse.hikari.desktop.model.EngineKind
+import codegeasse.hikari.desktop.model.StreamItem
 import codegeasse.hikari.desktop.nuvio.JsRun
 import codegeasse.hikari.desktop.stremio.parseManifest
 import codegeasse.hikari.desktop.ui.AppShell
+import codegeasse.hikari.desktop.ui.Detail
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -53,6 +55,24 @@ class HikariDesktopTest {
         assertTrue(m.catalogs[0].searchable)
     }
 
+    @Test
+    fun `isNewer compares versions numerically`() {
+        assertTrue(Installer.isNewer("1.2.10", "1.2.9"))
+        assertTrue(Installer.isNewer("2", "10") == false)
+        assertTrue(Installer.isNewer("10", "9"))
+        assertTrue(!Installer.isNewer("1.2.3", "1.2.3"))
+        assertTrue(!Installer.isNewer(null, "1.0"))
+        assertTrue(Installer.isNewer("abc123", null))
+        assertTrue(Installer.isNewer("20240101", "20231231"))
+    }
+
+    @Test
+    fun `streamRank orders best quality first`() {
+        fun s(q: String?, n: String) = StreamItem(name = n, url = "http://x", quality = q)
+        val ranked = listOf(s("480p", "a"), s("1080p", "b"), s(null, "c 720p"), s(null, "d"), s("4K", "e"))
+            .sortedByDescending { Detail.streamRank(it) }.map { it.name }
+        assertEquals(listOf("e", "b", "c 720p", "a", "d"), ranked)
+    }
     @Test
     fun `nuvio results parse tolerates junk`() {
         assertTrue(JsRun.parseResults("not json").isEmpty())
